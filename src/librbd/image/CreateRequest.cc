@@ -124,8 +124,8 @@ CreateRequest<I>::CreateRequest(const ConfigProxy& config, IoCtx &ioctx,
                                 cls::rbd::MirrorImageMode mirror_image_mode,
                                 const std::string &non_primary_global_image_id,
                                 const std::string &primary_mirror_uuid,
-                                asio::ContextWQ *op_work_queue,
-                                Context *on_finish)
+                               asio::ContextWQ *op_work_queue,
+                               Context *on_finish)
   : m_config(config), m_image_name(image_name), m_image_id(image_id),
     m_size(size), m_create_flags(create_flags),
     m_mirror_image_mode(mirror_image_mode),
@@ -275,7 +275,7 @@ void CreateRequest<I>::validate_data_pool() {
   }
 
   if (!m_config.get_val<bool>("rbd_validate_pool")) {
-    add_image_to_directory();
+    send_reserve_namespace_quota();
     return;
   }
 
@@ -299,6 +299,58 @@ void CreateRequest<I>::handle_validate_data_pool(int r) {
     lderr(m_cct) << "failed to validate pool: " << cpp_strerror(r) << dendl;
     complete(r);
     return;
+  }
+
+  send_reserve_namespace_quota();
+}
+
+template<typename I>
+void CreateRequest<I>::send_reserve_namespace_quota() {
+  std::string ns = m_io_ctx.get_namespace();
+  if (m_namespace_quota_reserved || ns.empty()) {
+    add_image_to_directory();
+    return;
+  }
+
+  m_namespace_reserved_bytes = m_size;
+  m_namespace_reserved_objects = Striper::get_num_objects(m_layout, m_size);
+  if (!m_namespace_reserved_bytes && !m_namespace_reserved_objects) {
+    add_image_to_directory();
+    return;
+  }
+
+  ldout(m_cct, 15) << "bytes=" << m_namespace_reserved_bytes
+                   << " objects=" << m_namespace_reserved_objects << dendl;
+
+  m_ns_default_io_ctx.dup(m_io_ctx);
+  m_ns_default_io_ctx.set_namespace("");
+
+  librados::ObjectWriteOperation op;
+  cls_client::namespace_quota_update(&op, ns,
+    static_cast<int64_t>(m_namespace_reserved_bytes),
+    static_cast<int64_t>(m_namespace_reserved_objects), true);
+
+  using klass = CreateRequest<I>;
+  librados::AioCompletion *comp =
+    create_rados_callback<klass, &klass::handle_reserve_namespace_quota>(this);
+  int r = m_ns_default_io_ctx.aio_operate(RBD_NAMESPACE, comp, &op);
+  ceph_assert(r == 0);
+  comp->release();
+}
+
+template<typename I>
+void CreateRequest<I>::handle_reserve_namespace_quota(int r) {
+  ldout(m_cct, 15) << "r=" << r << dendl;
+
+  if (r == -EOPNOTSUPP || r == -ENOENT) {
+    ldout(m_cct, 5) << "namespace quotas not available, proceeding" << dendl;
+  } else if (r < 0) {
+    lderr(m_cct) << "namespace quota exceeded or update failed: "
+                 << cpp_strerror(r) << dendl;
+    complete(r);
+    return;
+  } else {
+    m_namespace_quota_reserved = true;
   }
 
   add_image_to_directory();
@@ -682,6 +734,22 @@ void CreateRequest<I>::handle_mirror_image_enable(int r) {
 template<typename I>
 void CreateRequest<I>::complete(int r) {
   ldout(m_cct, 10) << "r=" << r << dendl;
+
+  if (r < 0 && m_namespace_quota_reserved) {
+    std::string ns = m_io_ctx.get_namespace();
+    if (!ns.empty()) {
+      librados::ObjectWriteOperation op;
+      cls_client::namespace_quota_update(&op, ns,
+        -static_cast<int64_t>(m_namespace_reserved_bytes),
+        -static_cast<int64_t>(m_namespace_reserved_objects), false);
+      int ret = m_ns_default_io_ctx.operate(RBD_NAMESPACE, &op);
+      if (ret < 0 && ret != -EOPNOTSUPP && ret != -ENOENT) {
+        ldout(m_cct, 1) << "namespace quota release failed (best-effort): "
+                        << cpp_strerror(ret) << dendl;
+      }
+    }
+    m_namespace_quota_reserved = false;
+  }
 
   m_data_io_ctx.close();
   auto on_finish = m_on_finish;

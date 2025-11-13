@@ -6,6 +6,7 @@
 
 #include "include/rados/librados.hpp"
 #include "librbd/ImageCtx.h"
+#include "librbd/NamespaceLimiter.h"
 #include "librbd/image/TypeTraits.h"
 #include "common/Timer.h"
 
@@ -134,6 +135,11 @@ private:
 
   std::map<uint64_t, SnapInfo> m_snap_infos;
 
+  NamespaceLimiter m_namespace_limiter;
+  bool m_namespace_usage_initialized = false;
+  uint64_t m_namespace_usage_bytes = 0;
+  uint64_t m_namespace_usage_objects = 0;
+
   void open_image();
   void handle_open_image(int r);
 
@@ -187,6 +193,7 @@ private:
   void handle_dir_remove_image(int r);
 
   void finish(int r);
+  void record_namespace_usage();
 };
 
 } // namespace image
