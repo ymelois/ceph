@@ -124,6 +124,8 @@
       mirror snapshot schedule status   Show mirror snapshot schedule status.
       namespace create                  Create an RBD image namespace.
       namespace list (namespace ls)     List RBD image namespaces.
+      namespace quota set               Set namespace quota limits.
+      namespace quota show (... ls)     Show namespace quota usage.
       namespace remove (namespace rm)   Remove an RBD image namespace.
       object-map check                  Verify the object map is correct.
       object-map rebuild                Rebuild an invalid object map.
@@ -2087,6 +2089,43 @@
   
   Optional arguments
     -p [ --pool ] arg    pool name
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
+  
+  rbd help namespace quota set
+  usage: rbd namespace quota set [--pool <pool>] [--namespace <namespace>] 
+                                 [--max-bytes <max-bytes>] [--no-max-bytes] 
+                                 [--max-objects <max-objects>] [--no-max-objects] 
+                                 <pool-spec> 
+  
+  Set namespace quota limits.
+  
+  Positional arguments
+    <pool-spec>          pool specification
+                         (example: <pool-name>[/<namespace>]
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --max-bytes arg      maximum total bytes allowed within the namespace
+    --no-max-bytes       remove the maximum bytes quota limit
+    --max-objects arg    maximum object count allowed within the namespace
+    --no-max-objects     remove the maximum object quota limit
+  
+  rbd help namespace quota show
+  usage: rbd namespace quota show [--pool <pool>] [--namespace <namespace>] 
+                                  [--format <format>] [--pretty-format] 
+                                  <pool-spec> 
+  
+  Show namespace quota usage.
+  
+  Positional arguments
+    <pool-spec>          pool specification
+                         (example: <pool-name>[/<namespace>]
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
     --format arg         output format (plain, json, or xml) [default: plain]
     --pretty-format      pretty formatting (json and xml)
   
