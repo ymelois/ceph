@@ -14,6 +14,7 @@
 #include "librbd/journal/TypeTraits.h"
 #include "librbd/mirror/DisableRequest.h"
 #include "librbd/operation/TrimRequest.h"
+#include "osdc/Striper.h"
 
 #define dout_subsys ceph_subsys_rbd
 #undef dout_prefix
@@ -37,8 +38,9 @@ RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, const std::string &image_name,
   : m_ioctx(ioctx), m_image_name(image_name), m_image_id(image_id),
     m_force(force), m_from_trash_remove(from_trash_remove),
     m_prog_ctx(prog_ctx), m_op_work_queue(op_work_queue),
-    m_on_finish(on_finish) {
-  m_cct = reinterpret_cast<CephContext *>(m_ioctx.cct());
+    m_on_finish(on_finish),
+    m_cct(reinterpret_cast<CephContext *>(ioctx.cct())),
+    m_namespace_limiter(m_cct, ioctx) {
 }
 
 template<typename I>
@@ -51,7 +53,8 @@ RemoveRequest<I>::RemoveRequest(IoCtx &ioctx, I *image_ctx, bool force,
     m_from_trash_remove(from_trash_remove), m_prog_ctx(prog_ctx),
     m_op_work_queue(op_work_queue), m_on_finish(on_finish),
     m_cct(image_ctx->cct), m_header_oid(image_ctx->header_oid),
-    m_old_format(image_ctx->old_format), m_unknown_format(false) {
+    m_old_format(image_ctx->old_format), m_unknown_format(false),
+    m_namespace_limiter(m_cct, ioctx) {
 }
 
 template<typename I>
@@ -109,6 +112,8 @@ void RemoveRequest<I>::handle_open_image(int r) {
 template<typename I>
 void RemoveRequest<I>::pre_remove_image() {
   ldout(m_cct, 5) << dendl;
+
+  record_namespace_usage();
 
   auto ctx = create_context_callback<
     RemoveRequest<I>, &RemoveRequest<I>::handle_pre_remove_image>(this);
@@ -607,8 +612,28 @@ template<typename I>
 void RemoveRequest<I>::finish(int r) {
   ldout(m_cct, 20) << "r=" << r << dendl;
 
+  if (r == 0 && m_namespace_usage_initialized) {
+    m_namespace_limiter.release(m_namespace_usage_bytes,
+                                m_namespace_usage_objects);
+    m_namespace_usage_initialized = false;
+  }
+
   m_on_finish->complete(r);
   delete this;
+}
+
+template<typename I>
+void RemoveRequest<I>::record_namespace_usage() {
+  if (m_namespace_usage_initialized || !m_namespace_limiter.enabled() ||
+      m_image_ctx == nullptr) {
+    return;
+  }
+
+  std::shared_lock image_locker{m_image_ctx->image_lock};
+  m_namespace_usage_bytes = m_image_ctx->size;
+  m_namespace_usage_objects =
+    Striper::get_num_objects(m_image_ctx->layout, m_image_ctx->size);
+  m_namespace_usage_initialized = true;
 }
 
 } // namespace image

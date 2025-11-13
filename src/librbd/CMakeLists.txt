@@ -32,6 +32,7 @@ set(librbd_internal_srcs
   LibrbdAdminSocketHook.cc
   ManagedLock.cc
   MirroringWatcher.cc
+  NamespaceLimiter.cc
   ObjectMap.cc
   Operations.cc
   PluginRegistry.cc

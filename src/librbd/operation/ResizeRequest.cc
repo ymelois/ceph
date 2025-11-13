@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "librbd/operation/ResizeRequest.h"
+#include "cls/rbd/cls_rbd_client.h"
 #include "librbd/ExclusiveLock.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/internal.h"
@@ -12,6 +13,7 @@
 #include "librbd/io/ImageDispatcherInterface.h"
 #include "librbd/io/ObjectDispatcherInterface.h"
 #include "librbd/operation/TrimRequest.h"
+#include "osdc/Striper.h"
 #include "common/dout.h"
 #include "common/errno.h"
 
@@ -129,7 +131,7 @@ Context *ResizeRequest<I>::send_append_op_event() {
 
   if (m_disable_journal || !this->template append_op_event<
         ResizeRequest<I>, &ResizeRequest<I>::handle_append_op_event>(this)) {
-    return send_grow_object_map();
+    return send_dispatch_resize();
   }
 
   ldout(cct, 5) << dendl;
@@ -149,7 +151,7 @@ Context *ResizeRequest<I>::handle_append_op_event(int *result) {
     return this->create_context_finisher(*result);
   }
 
-  return send_grow_object_map();
+  return send_dispatch_resize();
 }
 
 template <typename I>
@@ -190,7 +192,6 @@ void ResizeRequest<I>::send_flush_cache() {
 
   CephContext *cct = image_ctx.cct;
   ldout(cct, 5) << dendl;
-
   std::shared_lock owner_locker{image_ctx.owner_lock};
   auto ctx = create_context_callback<
     ResizeRequest<I>, &ResizeRequest<I>::handle_flush_cache>(this);
@@ -249,7 +250,71 @@ Context *ResizeRequest<I>::handle_invalidate_cache(int *result) {
 }
 
 template <typename I>
-Context *ResizeRequest<I>::send_grow_object_map() {
+void ResizeRequest<I>::send_reserve_ns_quota() {
+  I &image_ctx = this->m_image_ctx;
+  CephContext *cct = image_ctx.cct;
+
+  std::string ns = image_ctx.md_ctx.get_namespace();
+  if (ns.empty()) {
+    // no namespace, skip directly to grow object map
+    send_grow_object_map();
+    return;
+  }
+
+  m_ns_delta_bytes = m_new_size - m_original_size;
+  uint64_t new_objects = Striper::get_num_objects(image_ctx.layout, m_new_size);
+  uint64_t old_objects = Striper::get_num_objects(image_ctx.layout,
+                                                 m_original_size);
+  m_ns_delta_objects = (new_objects > old_objects) ?
+    new_objects - old_objects : 0;
+
+  if (!m_ns_delta_bytes && !m_ns_delta_objects) {
+    send_grow_object_map();
+    return;
+  }
+
+  ldout(cct, 5) << "delta_bytes=" << m_ns_delta_bytes
+                << " delta_objects=" << m_ns_delta_objects << dendl;
+
+  m_ns_default_io_ctx.dup(image_ctx.md_ctx);
+  m_ns_default_io_ctx.set_namespace("");
+
+  librados::ObjectWriteOperation op;
+  cls_client::namespace_quota_update(&op, ns,
+    static_cast<int64_t>(m_ns_delta_bytes),
+    static_cast<int64_t>(m_ns_delta_objects), true);
+
+  librados::AioCompletion *comp = create_rados_callback<
+    ResizeRequest<I>, &ResizeRequest<I>::handle_reserve_ns_quota>(this);
+  int r = m_ns_default_io_ctx.aio_operate(RBD_NAMESPACE, comp, &op);
+  ceph_assert(r == 0);
+  comp->release();
+}
+
+template <typename I>
+Context *ResizeRequest<I>::handle_reserve_ns_quota(int *result) {
+  I &image_ctx = this->m_image_ctx;
+  CephContext *cct = image_ctx.cct;
+  ldout(cct, 5) << "r=" << *result << dendl;
+
+  if (*result == -EOPNOTSUPP || *result == -ENOENT) {
+    // quotas not supported or namespace has no quota entry, proceed
+    ldout(cct, 5) << "namespace quotas not available, proceeding" << dendl;
+  } else if (*result < 0) {
+    lderr(cct) << "namespace quota exceeded or update failed: "
+               << cpp_strerror(*result) << dendl;
+    image_ctx.io_image_dispatcher->unblock_writes();
+    return this->create_context_finisher(*result);
+  } else {
+    m_ns_quota_reserved = true;
+  }
+
+  send_grow_object_map();
+  return nullptr;
+}
+
+template <typename I>
+Context *ResizeRequest<I>::send_dispatch_resize() {
   I &image_ctx = this->m_image_ctx;
 
   {
@@ -265,6 +330,15 @@ Context *ResizeRequest<I>::send_grow_object_map() {
     send_flush_cache();
     return nullptr;
   }
+
+  // growing: reserve namespace quota first (async)
+  send_reserve_ns_quota();
+  return nullptr;
+}
+
+template <typename I>
+Context *ResizeRequest<I>::send_grow_object_map() {
+  I &image_ctx = this->m_image_ctx;
 
   image_ctx.owner_lock.lock_shared();
   image_ctx.image_lock.lock_shared();
@@ -301,6 +375,10 @@ Context *ResizeRequest<I>::handle_grow_object_map(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to resize object map: "
                << cpp_strerror(*result) << dendl;
+    if (m_ns_quota_reserved) {
+      send_release_ns_quota(m_ns_delta_bytes, m_ns_delta_objects);
+      m_ns_quota_reserved = false;
+    }
     image_ctx.io_image_dispatcher->unblock_writes();
     return this->create_context_finisher(*result);
   }
@@ -425,6 +503,10 @@ Context *ResizeRequest<I>::handle_update_header(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to update image header: " << cpp_strerror(*result)
                << dendl;
+    if (m_ns_quota_reserved) {
+      send_release_ns_quota(m_ns_delta_bytes, m_ns_delta_objects);
+      m_ns_quota_reserved = false;
+    }
     image_ctx.io_image_dispatcher->unblock_writes();
     return this->create_context_finisher(*result);
   }
@@ -445,6 +527,39 @@ void ResizeRequest<I>::compute_parent_overlap() {
 }
 
 template <typename I>
+void ResizeRequest<I>::send_release_ns_quota(uint64_t delta_bytes,
+                                             uint64_t delta_objects) {
+  I &image_ctx = this->m_image_ctx;
+  CephContext *cct = image_ctx.cct;
+
+  std::string ns = image_ctx.md_ctx.get_namespace();
+  if (ns.empty() || (!delta_bytes && !delta_objects)) {
+    return;
+  }
+
+  ldout(cct, 5) << "releasing delta_bytes=" << delta_bytes
+                << " delta_objects=" << delta_objects << dendl;
+
+  // Synchronous best-effort release.  This runs on the aio completion
+  // thread, but IoCtx::operate() dispatches to a separate worker and
+  // waits, so it does not re-enter the completion thread.
+  librados::IoCtx release_ioctx;
+  release_ioctx.dup(image_ctx.md_ctx);
+  release_ioctx.set_namespace("");
+
+  librados::ObjectWriteOperation op;
+  cls_client::namespace_quota_update(&op, ns,
+    -static_cast<int64_t>(delta_bytes),
+    -static_cast<int64_t>(delta_objects), false);
+
+  int r = release_ioctx.operate(RBD_NAMESPACE, &op);
+  if (r < 0 && r != -EOPNOTSUPP && r != -ENOENT) {
+    ldout(cct, 1) << "namespace quota release failed (best-effort): "
+                  << cpp_strerror(r) << dendl;
+  }
+}
+
+template <typename I>
 void ResizeRequest<I>::update_size_and_overlap() {
   I &image_ctx = this->m_image_ctx;
   {
@@ -454,6 +569,17 @@ void ResizeRequest<I>::update_size_and_overlap() {
     if (image_ctx.parent != NULL && m_new_size < m_original_size) {
       image_ctx.parent_md.overlap = m_new_parent_overlap;
     }
+  }
+
+  if (m_new_size < m_original_size) {
+    uint64_t delta_bytes = m_original_size - m_new_size;
+    uint64_t old_objects = Striper::get_num_objects(image_ctx.layout,
+                                                   m_original_size);
+    uint64_t new_objects = Striper::get_num_objects(image_ctx.layout,
+                                                   m_new_size);
+    uint64_t delta_objects = (old_objects > new_objects) ?
+      old_objects - new_objects : 0;
+    send_release_ns_quota(delta_bytes, delta_objects);
   }
 
   // blocked by PRE_BLOCK_WRITES (grow) or POST_BLOCK_WRITES (shrink) state
