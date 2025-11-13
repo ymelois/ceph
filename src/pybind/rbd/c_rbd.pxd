@@ -199,6 +199,12 @@ cdef extern from "rbd/librbd.h" nogil:
         time_t deletion_time
         time_t deferment_end_time
 
+    ctypedef struct rbd_namespace_quota_info_t:
+        uint64_t max_bytes
+        uint64_t max_objects
+        uint64_t used_bytes
+        uint64_t used_objects
+
     ctypedef struct rbd_image_watcher_t:
         char *addr
         int64_t id
@@ -702,6 +708,11 @@ cdef extern from "rbd/librbd.h" nogil:
                            size_t *size)
     int rbd_namespace_exists(rados_ioctx_t io, const char *namespace_name,
                              bint *exists)
+    int rbd_namespace_set_quota(rados_ioctx_t io, const char *namespace_name,
+                                uint32_t fields, uint64_t max_bytes,
+                                uint64_t max_objects)
+    int rbd_namespace_get_quota(rados_ioctx_t io, const char *namespace_name,
+                                rbd_namespace_quota_info_t *info)
 
     int rbd_pool_init(rados_ioctx_t, bint force)
 

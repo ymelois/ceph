@@ -439,6 +439,12 @@ public:
   int namespace_remove(IoCtx& ioctx, const char *namespace_name);
   int namespace_list(IoCtx& io_ctx, std::vector<std::string>* namespace_names);
   int namespace_exists(IoCtx& io_ctx, const char *namespace_name, bool *exists);
+  int namespace_set_quota(IoCtx& io_ctx, const char *namespace_name,
+                          bool set_max_bytes, uint64_t max_bytes,
+                          bool set_max_objects, uint64_t max_objects);
+  int namespace_get_quota(IoCtx& io_ctx, const char *namespace_name,
+                          uint64_t *max_bytes, uint64_t *max_objects,
+                          uint64_t *used_bytes, uint64_t *used_objects);
 
   int pool_init(IoCtx& io_ctx, bool force);
   int pool_stats_get(IoCtx& io_ctx, PoolStats *pool_stats);

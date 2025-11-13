@@ -891,6 +891,29 @@ namespace librbd {
     return librbd::api::Namespace<>::exists(io_ctx, namespace_name, exists);
   }
 
+  int RBD::namespace_set_quota(IoCtx& io_ctx, const char *namespace_name,
+                               bool set_max_bytes, uint64_t max_bytes,
+                               bool set_max_objects, uint64_t max_objects) {
+    return librbd::api::Namespace<>::set_quota(io_ctx, namespace_name,
+                                              set_max_bytes, max_bytes,
+                                              set_max_objects, max_objects);
+  }
+
+  int RBD::namespace_get_quota(IoCtx& io_ctx, const char *namespace_name,
+                               uint64_t *max_bytes, uint64_t *max_objects,
+                               uint64_t *used_bytes, uint64_t *used_objects) {
+    cls::rbd::NamespaceInfo info;
+    int r = librbd::api::Namespace<>::get_quota(io_ctx, namespace_name, &info);
+    if (r < 0) {
+      return r;
+    }
+    if (max_bytes) *max_bytes = info.max_bytes;
+    if (max_objects) *max_objects = info.max_objects;
+    if (used_bytes) *used_bytes = info.used_bytes;
+    if (used_objects) *used_objects = info.used_objects;
+    return 0;
+  }
+
   int RBD::pool_init(IoCtx& io_ctx, bool force) {
     return librbd::api::Pool<>::init(io_ctx, force);
   }
@@ -4175,6 +4198,49 @@ extern "C" int rbd_namespace_exists(rados_ioctx_t io,
   librados::IoCtx::from_rados_ioctx_t(io, io_ctx);
 
   return librbd::api::Namespace<>::exists(io_ctx, namespace_name, exists);
+}
+
+extern "C" int rbd_namespace_set_quota(rados_ioctx_t io,
+                                       const char *namespace_name,
+                                       uint32_t fields, uint64_t max_bytes,
+                                       uint64_t max_objects) {
+  if (namespace_name == nullptr || fields == 0) {
+    return -EINVAL;
+  }
+
+  librados::IoCtx io_ctx;
+  librados::IoCtx::from_rados_ioctx_t(io, io_ctx);
+
+  bool set_max_bytes = (fields & RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES) != 0;
+  bool set_max_objects = (fields & RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS) != 0;
+
+  return librbd::api::Namespace<>::set_quota(
+    io_ctx, namespace_name, set_max_bytes, max_bytes,
+    set_max_objects, max_objects);
+}
+
+extern "C" int rbd_namespace_get_quota(rados_ioctx_t io,
+                                       const char *namespace_name,
+                                       rbd_namespace_quota_info_t *info) {
+  if (namespace_name == nullptr || info == nullptr) {
+    return -EINVAL;
+  }
+
+  librados::IoCtx io_ctx;
+  librados::IoCtx::from_rados_ioctx_t(io, io_ctx);
+
+  cls::rbd::NamespaceInfo ns_info;
+  int r = librbd::api::Namespace<>::get_quota(io_ctx, namespace_name,
+                                              &ns_info);
+  if (r < 0) {
+    return r;
+  }
+
+  info->max_bytes = ns_info.max_bytes;
+  info->max_objects = ns_info.max_objects;
+  info->used_bytes = ns_info.used_bytes;
+  info->used_objects = ns_info.used_objects;
+  return 0;
 }
 
 extern "C" int rbd_pool_init(rados_ioctx_t io, bool force) {
