@@ -3128,6 +3128,104 @@ TEST_F(TestClsRbd, namespace_methods)
   ASSERT_TRUE(entries.empty());
 }
 
+TEST_F(TestClsRbd, namespace_quota)
+{
+  librados::IoCtx ioctx;
+  ASSERT_EQ(0, _rados.ioctx_create(_pool_name.c_str(), ioctx));
+
+  string name = "quota_ns";
+  ASSERT_EQ(0, namespace_add(&ioctx, name));
+
+  // get quota on fresh namespace, should return zeros
+  cls::rbd::NamespaceInfo info;
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(0U, info.max_bytes);
+  ASSERT_EQ(0U, info.max_objects);
+  ASSERT_EQ(0U, info.used_bytes);
+  ASSERT_EQ(0U, info.used_objects);
+
+  // set max_bytes only
+  ASSERT_EQ(0, namespace_quota_set(&ioctx, name,
+                                   true, 1024, false, 0));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(1024U, info.max_bytes);
+  ASSERT_EQ(0U, info.max_objects);
+
+  // set max_objects, leaving max_bytes unchanged
+  ASSERT_EQ(0, namespace_quota_set(&ioctx, name,
+                                   false, 0, true, 16));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(1024U, info.max_bytes);
+  ASSERT_EQ(16U, info.max_objects);
+
+  // set both
+  ASSERT_EQ(0, namespace_quota_set(&ioctx, name,
+                                   true, 2048, true, 32));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(2048U, info.max_bytes);
+  ASSERT_EQ(32U, info.max_objects);
+
+  // remove max_bytes (set to 0)
+  ASSERT_EQ(0, namespace_quota_set(&ioctx, name,
+                                   true, 0, false, 0));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(0U, info.max_bytes);
+  ASSERT_EQ(32U, info.max_objects);
+
+  // invalid: empty name
+  ASSERT_EQ(-EINVAL, namespace_quota_get(&ioctx, "", &info));
+  ASSERT_EQ(-EINVAL, namespace_quota_set(&ioctx, "",
+                                         true, 1024, false, 0));
+
+  // invalid: neither field set
+  ASSERT_EQ(-EINVAL, namespace_quota_set(&ioctx, name,
+                                         false, 0, false, 0));
+
+  // nonexistent namespace
+  ASSERT_EQ(-ENOENT, namespace_quota_get(&ioctx, "no_such_ns", &info));
+
+  // quota_update: reserve within limit
+  ASSERT_EQ(0, namespace_quota_set(&ioctx, name,
+                                   true, 1024, true, 8));
+  ASSERT_EQ(0, namespace_quota_update(&ioctx, name, 512, 4, true));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(512U, info.used_bytes);
+  ASSERT_EQ(4U, info.used_objects);
+
+  // quota_update: exceed bytes limit
+  ASSERT_EQ(-EDQUOT, namespace_quota_update(&ioctx, name, 1024, 0, true));
+  // used_bytes should be unchanged
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(512U, info.used_bytes);
+
+  // quota_update: exceed objects limit
+  ASSERT_EQ(-EDQUOT, namespace_quota_update(&ioctx, name, 0, 8, true));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(4U, info.used_objects);
+
+  // quota_update: release (negative delta, no enforcement)
+  ASSERT_EQ(0, namespace_quota_update(&ioctx, name, -256, -2, false));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(256U, info.used_bytes);
+  ASSERT_EQ(2U, info.used_objects);
+
+  // quota_update: skip enforcement (enforce=false allows exceeding)
+  ASSERT_EQ(0, namespace_quota_update(&ioctx, name, 2048, 0, false));
+  ASSERT_EQ(0, namespace_quota_get(&ioctx, name, &info));
+  ASSERT_EQ(2304U, info.used_bytes);
+
+  // quota_update: release more than used should fail
+  ASSERT_EQ(-ERANGE, namespace_quota_update(&ioctx, name, -10000, 0, false));
+
+  // quota_update: empty name
+  ASSERT_EQ(-EINVAL, namespace_quota_update(&ioctx, "", 0, 0, false));
+
+  // quota_update: nonexistent namespace
+  ASSERT_EQ(-ENOENT, namespace_quota_update(&ioctx, "no_such_ns", 1, 0, true));
+
+  ASSERT_EQ(0, namespace_remove(&ioctx, name));
+}
+
 TEST_F(TestClsRbd, migration)
 {
   librados::IoCtx ioctx;

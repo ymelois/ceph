@@ -1128,6 +1128,44 @@ void TrashImageSpec::dump(Formatter *f) const {
   f->dump_unsigned("deferment_end_time", deferment_end_time);
 }
 
+// v1: initial format (max_bytes, max_objects, used_bytes, used_objects).
+// Namespaces created before quota support have an empty omap value;
+// namespace_read_info() treats length==0 as a default NamespaceInfo.
+void NamespaceInfo::encode(bufferlist &bl) const {
+  ENCODE_START(1, 1, bl);
+  encode(max_bytes, bl);
+  encode(max_objects, bl);
+  encode(used_bytes, bl);
+  encode(used_objects, bl);
+  ENCODE_FINISH(bl);
+}
+
+void NamespaceInfo::decode(bufferlist::const_iterator &it) {
+  DECODE_START(1, it);
+  decode(max_bytes, it);
+  decode(max_objects, it);
+  decode(used_bytes, it);
+  decode(used_objects, it);
+  DECODE_FINISH(it);
+}
+
+void NamespaceInfo::dump(Formatter *f) const {
+  f->dump_unsigned("max_bytes", max_bytes);
+  f->dump_unsigned("max_objects", max_objects);
+  f->dump_unsigned("used_bytes", used_bytes);
+  f->dump_unsigned("used_objects", used_objects);
+}
+
+void NamespaceInfo::generate_test_instances(std::list<NamespaceInfo*> &o) {
+  o.push_back(new NamespaceInfo());
+  NamespaceInfo *info = new NamespaceInfo();
+  info->max_bytes = 1024;
+  info->max_objects = 16;
+  info->used_bytes = 256;
+  info->used_objects = 4;
+  o.push_back(info);
+}
+
 void MirrorImageMap::encode(bufferlist &bl) const {
   ENCODE_START(1, 1, bl);
   encode(instance_id, bl);
