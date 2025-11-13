@@ -2988,6 +2988,91 @@ int namespace_list(librados::IoCtx *ioctx,
   return namespace_list_finish(&iter, entries);
 }
 
+void namespace_quota_get_start(librados::ObjectReadOperation *op,
+                               const std::string &name)
+{
+  bufferlist bl;
+  encode(name, bl);
+  op->exec("rbd", "namespace_quota_get", bl);
+}
+
+int namespace_quota_get_finish(bufferlist::const_iterator *it,
+                               cls::rbd::NamespaceInfo *info)
+{
+  try {
+    decode(*info, *it);
+  } catch (const ceph::buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+int namespace_quota_get(librados::IoCtx *ioctx, const std::string &name,
+                        cls::rbd::NamespaceInfo *info)
+{
+  librados::ObjectReadOperation op;
+  namespace_quota_get_start(&op, name);
+
+  bufferlist out_bl;
+  int r = ioctx->operate(RBD_NAMESPACE, &op, &out_bl);
+  if (r < 0) {
+    return r;
+  }
+
+  auto iter = out_bl.cbegin();
+  return namespace_quota_get_finish(&iter, info);
+}
+
+void namespace_quota_set(librados::ObjectWriteOperation *op,
+                         const std::string &name,
+                         bool set_max_bytes, uint64_t max_bytes,
+                         bool set_max_objects, uint64_t max_objects)
+{
+  bufferlist bl;
+  encode(name, bl);
+  encode(set_max_bytes, bl);
+  if (set_max_bytes) {
+    encode(max_bytes, bl);
+  }
+  encode(set_max_objects, bl);
+  if (set_max_objects) {
+    encode(max_objects, bl);
+  }
+  op->exec("rbd", "namespace_quota_set", bl);
+}
+
+int namespace_quota_set(librados::IoCtx *ioctx, const std::string &name,
+                        bool set_max_bytes, uint64_t max_bytes,
+                        bool set_max_objects, uint64_t max_objects)
+{
+  librados::ObjectWriteOperation op;
+  namespace_quota_set(&op, name, set_max_bytes, max_bytes,
+                      set_max_objects, max_objects);
+  return ioctx->operate(RBD_NAMESPACE, &op);
+}
+
+void namespace_quota_update(librados::ObjectWriteOperation *op,
+                            const std::string &name,
+                            int64_t delta_bytes, int64_t delta_objects,
+                            bool enforce)
+{
+  bufferlist bl;
+  encode(name, bl);
+  encode(delta_bytes, bl);
+  encode(delta_objects, bl);
+  encode(enforce, bl);
+  op->exec("rbd", "namespace_quota_update", bl);
+}
+
+int namespace_quota_update(librados::IoCtx *ioctx, const std::string &name,
+                           int64_t delta_bytes, int64_t delta_objects,
+                           bool enforce)
+{
+  librados::ObjectWriteOperation op;
+  namespace_quota_update(&op, name, delta_bytes, delta_objects, enforce);
+  return ioctx->operate(RBD_NAMESPACE, &op);
+}
+
 void sparsify(librados::ObjectWriteOperation *op, size_t sparse_size,
               bool remove_empty)
 {
