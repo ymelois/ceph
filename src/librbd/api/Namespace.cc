@@ -252,6 +252,59 @@ int Namespace<I>::exists(librados::IoCtx& io_ctx, const std::string& name, bool 
   return 0;
 }
 
+template <typename I>
+int Namespace<I>::set_quota(librados::IoCtx& io_ctx, const std::string& name,
+                            bool set_max_bytes, uint64_t max_bytes,
+                            bool set_max_objects, uint64_t max_objects)
+{
+  CephContext *cct = (CephContext *)io_ctx.cct();
+  ldout(cct, 5) << "name=" << name << dendl;
+
+  if (name.empty() || (!set_max_bytes && !set_max_objects)) {
+    return -EINVAL;
+  }
+
+  librados::IoCtx default_ns_ctx;
+  default_ns_ctx.dup(io_ctx);
+  default_ns_ctx.set_namespace("");
+
+  int r = cls_client::namespace_quota_set(
+    &default_ns_ctx, name, set_max_bytes, max_bytes,
+    set_max_objects, max_objects);
+  if (r == -ENOENT) {
+    ldout(cct, 5) << "namespace quota entry missing for " << name << dendl;
+  } else if (r < 0) {
+    lderr(cct) << "failed to set namespace quota: " << cpp_strerror(r)
+               << dendl;
+  }
+  return r;
+}
+
+template <typename I>
+int Namespace<I>::get_quota(librados::IoCtx& io_ctx, const std::string& name,
+                            cls::rbd::NamespaceInfo *info)
+{
+  CephContext *cct = (CephContext *)io_ctx.cct();
+  ldout(cct, 5) << "name=" << name << dendl;
+
+  if (name.empty() || info == nullptr) {
+    return -EINVAL;
+  }
+
+  librados::IoCtx default_ns_ctx;
+  default_ns_ctx.dup(io_ctx);
+  default_ns_ctx.set_namespace("");
+
+  int r = cls_client::namespace_quota_get(&default_ns_ctx, name, info);
+  if (r == -ENOENT) {
+    ldout(cct, 5) << "namespace quota entry missing for " << name << dendl;
+  } else if (r < 0) {
+    lderr(cct) << "failed to get namespace quota: " << cpp_strerror(r)
+               << dendl;
+  }
+  return r;
+}
+
 } // namespace api
 } // namespace librbd
 

@@ -1581,6 +1581,22 @@ CEPH_RBD_API int rbd_namespace_list(rados_ioctx_t io, char *namespace_names,
 CEPH_RBD_API int rbd_namespace_exists(rados_ioctx_t io,
                                       const char *namespace_name,
                                       bool *exists);
+typedef struct {
+  uint64_t max_bytes;
+  uint64_t max_objects;
+  uint64_t used_bytes;
+  uint64_t used_objects;
+} rbd_namespace_quota_info_t;
+
+CEPH_RBD_API int rbd_namespace_set_quota(rados_ioctx_t io,
+                                         const char *namespace_name,
+                                         bool set_max_bytes,
+                                         uint64_t max_bytes,
+                                         bool set_max_objects,
+                                         uint64_t max_objects);
+CEPH_RBD_API int rbd_namespace_get_quota(rados_ioctx_t io,
+                                         const char *namespace_name,
+                                         rbd_namespace_quota_info_t *info);
 
 CEPH_RBD_API int rbd_pool_init(rados_ioctx_t io, bool force);
 

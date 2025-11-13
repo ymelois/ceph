@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace cls { namespace rbd { struct NamespaceInfo; } }
+
 namespace librbd {
 
 struct ImageCtx;
@@ -22,6 +24,11 @@ struct Namespace {
   static int remove(librados::IoCtx& io_ctx, const std::string& name);
   static int list(librados::IoCtx& io_ctx, std::vector<std::string>* names);
   static int exists(librados::IoCtx& io_ctx, const std::string& name, bool *exists);
+  static int set_quota(librados::IoCtx& io_ctx, const std::string& name,
+                       bool set_max_bytes, uint64_t max_bytes,
+                       bool set_max_objects, uint64_t max_objects);
+  static int get_quota(librados::IoCtx& io_ctx, const std::string& name,
+                       cls::rbd::NamespaceInfo *info);
 
 };
 

@@ -2072,6 +2072,66 @@ class RBD(object):
         finally:
             free(_names)
 
+    def namespace_set_quota(self, ioctx, name, set_max_bytes=False,
+                            max_bytes=0, set_max_objects=False,
+                            max_objects=0):
+        """
+        Set namespace quota limits
+
+        :param ioctx: determines which RADOS pool
+        :type ioctx: :class:`rados.Ioctx`
+        :param name: namespace name
+        :type name: str
+        :param set_max_bytes: whether to update the bytes limit
+        :type set_max_bytes: bool
+        :param max_bytes: maximum total bytes (0 for unlimited)
+        :type max_bytes: int
+        :param set_max_objects: whether to update the objects limit
+        :type set_max_objects: bool
+        :param max_objects: maximum total objects (0 for unlimited)
+        :type max_objects: int
+        """
+        name = cstr(name, 'name')
+        cdef:
+            rados_ioctx_t _ioctx = convert_ioctx(ioctx)
+            const char *_name = name
+            bint _set_max_bytes = set_max_bytes
+            uint64_t _max_bytes = max_bytes
+            bint _set_max_objects = set_max_objects
+            uint64_t _max_objects = max_objects
+        with nogil:
+            ret = rbd_namespace_set_quota(_ioctx, _name, _set_max_bytes,
+                                          _max_bytes, _set_max_objects,
+                                          _max_objects)
+        if ret != 0:
+            raise make_ex(ret, 'error setting namespace quota')
+
+    def namespace_get_quota(self, ioctx, name):
+        """
+        Get namespace quota information
+
+        :param ioctx: determines which RADOS pool
+        :type ioctx: :class:`rados.Ioctx`
+        :param name: namespace name
+        :type name: str
+        :returns: dict - keys: max_bytes, max_objects, used_bytes, used_objects
+        """
+        name = cstr(name, 'name')
+        cdef:
+            rados_ioctx_t _ioctx = convert_ioctx(ioctx)
+            const char *_name = name
+            rbd_namespace_quota_info_t info
+        with nogil:
+            ret = rbd_namespace_get_quota(_ioctx, _name, &info)
+        if ret != 0:
+            raise make_ex(ret, 'error getting namespace quota')
+        return {
+            'max_bytes': info.max_bytes,
+            'max_objects': info.max_objects,
+            'used_bytes': info.used_bytes,
+            'used_objects': info.used_objects,
+        }
+
     def pool_init(self, ioctx, force):
         """
         Initialize an RBD pool

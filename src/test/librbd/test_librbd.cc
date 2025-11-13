@@ -12139,10 +12139,8 @@ TEST_F(TestLibRBD, NamespaceQuotaCreate) {
     rbd_namespace_remove(ioctx, ns_name.c_str());
   } BOOST_SCOPE_EXIT_END;
 
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES |
-                    RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS;
-  ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(), fields,
-                                       12ULL << 20, 0));
+  ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
+                                       true, 12ULL << 20, false, 0));
 
   // Note: rados_ioctx_set_namespace() cannot be used here because
   // unittest_librbd links against rados_test_stub, where rados_ioctx_t
@@ -12207,10 +12205,8 @@ TEST_F(TestLibRBD, NamespaceQuotaGetInfo) {
   const uint64_t max_bytes = 8ULL << 20;
   const uint64_t max_objects = 32;
 
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES |
-                    RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS;
-  ASSERT_EQ(0, rbd_namespace_set_quota(c_ioctx, ns_name.c_str(), fields,
-                                       max_bytes, max_objects));
+  ASSERT_EQ(0, rbd_namespace_set_quota(c_ioctx, ns_name.c_str(),
+                                       true, max_bytes, true, max_objects));
 
   cls::rbd::NamespaceInfo info;
   ASSERT_EQ(0, librbd::api::Namespace<>::get_quota(ioctx, ns_name, &info));
@@ -12261,9 +12257,8 @@ TEST_F(TestLibRBD, NamespaceQuotaIsolation) {
     rbd_namespace_remove(ioctx, open_ns.c_str());
   } BOOST_SCOPE_EXIT_END;
 
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES;
   r = rbd_namespace_set_quota(ioctx, full_ns.c_str(),
-                              fields, 6ULL << 20, 0);
+                              true, 6ULL << 20, false, 0);
   if (r == -ENOSYS) {
     GTEST_SKIP() << "cls_rbd namespace support unavailable";
   }
@@ -12314,8 +12309,7 @@ TEST_F(TestLibRBD, NamespaceQuotaDefaultNamespace) {
 
   ASSERT_EQ(0, rbd_pool_init(c_ioctx, true));
 
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES;
-  int r = rbd_namespace_set_quota(c_ioctx, "", fields, 1ULL << 20, 0);
+  int r = rbd_namespace_set_quota(c_ioctx, "", true, 1ULL << 20, false, 0);
   if (r == -ENOSYS) {
     GTEST_SKIP() << "cls_rbd namespace support unavailable";
   }
@@ -12405,9 +12399,8 @@ TEST_F(TestLibRBD, NamespaceQuotaResize) {
   } BOOST_SCOPE_EXIT_END;
 
   // quota: 12 MiB
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES;
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       fields, 12ULL << 20, 0));
+                                       true, 12ULL << 20, false, 0));
 
   // create 4 MiB image in namespace
   {
@@ -12478,9 +12471,8 @@ TEST_F(TestLibRBD, NamespaceQuotaObjectCount) {
   } BOOST_SCOPE_EXIT_END;
 
   // set object-count-only quota: 1 object, no byte limit
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS;
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       fields, 0, 1));
+                                       false, 0, true, 1));
 
   {
     librados::IoCtx tmp;
@@ -12533,10 +12525,8 @@ TEST_F(TestLibRBD, NamespaceQuotaUpdateAndRemove) {
   } BOOST_SCOPE_EXIT_END;
 
   // set initial quota: 4 MiB bytes, 8 objects
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES |
-                    RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS;
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       fields, 4ULL << 20, 8));
+                                       true, 4ULL << 20, true, 8));
 
   rbd_namespace_quota_info_t info;
   ASSERT_EQ(0, rbd_namespace_get_quota(ioctx, ns_name.c_str(), &info));
@@ -12544,25 +12534,22 @@ TEST_F(TestLibRBD, NamespaceQuotaUpdateAndRemove) {
   ASSERT_EQ(8U, info.max_objects);
 
   // update only max_bytes to 16 MiB (leave max_objects unchanged)
-  fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES;
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       fields, 16ULL << 20, 0));
+                                       true, 16ULL << 20, false, 0));
   ASSERT_EQ(0, rbd_namespace_get_quota(ioctx, ns_name.c_str(), &info));
   ASSERT_EQ(16ULL << 20, info.max_bytes);
   ASSERT_EQ(8U, info.max_objects);  // unchanged
 
   // remove max_bytes (set to 0 = unlimited)
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES,
-                                       0, 0));
+                                       true, 0, false, 0));
   ASSERT_EQ(0, rbd_namespace_get_quota(ioctx, ns_name.c_str(), &info));
   ASSERT_EQ(0U, info.max_bytes);    // unlimited
   ASSERT_EQ(8U, info.max_objects);   // still set
 
   // remove max_objects too
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS,
-                                       0, 0));
+                                       false, 0, true, 0));
   ASSERT_EQ(0, rbd_namespace_get_quota(ioctx, ns_name.c_str(), &info));
   ASSERT_EQ(0U, info.max_bytes);
   ASSERT_EQ(0U, info.max_objects);
@@ -12595,9 +12582,8 @@ TEST_F(TestLibRBD, NamespaceQuotaCreateFailureRollback) {
   } BOOST_SCOPE_EXIT_END;
 
   // quota: 12 MiB
-  uint32_t fields = RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES;
   ASSERT_EQ(0, rbd_namespace_set_quota(ioctx, ns_name.c_str(),
-                                       fields, 12ULL << 20, 0));
+                                       true, 12ULL << 20, false, 0));
 
   {
     librados::IoCtx tmp;
