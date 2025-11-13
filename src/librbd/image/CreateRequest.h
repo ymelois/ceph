@@ -57,7 +57,11 @@ private:
    *                               VALIDATE DATA POOL           v (pool validation
    *                                     |                      .  disabled)
    *                                     v                      .
-   * (error: bottom up)         ADD IMAGE TO DIRECTORY  < . . . .
+   *                          RESERVE NAMESPACE QUOTA < . . . . .
+   *                            (skip if no namespace)
+   *                                     |
+   *                                     v
+   * (error: bottom up)         ADD IMAGE TO DIRECTORY
    *  _______<_______                    |
    * |               |                   v
    * |               |            CREATE ID OBJECT
@@ -132,6 +136,10 @@ private:
   bufferlist m_outbl;
   cls::rbd::MirrorMode m_mirror_mode = cls::rbd::MIRROR_MODE_DISABLED;
   cls::rbd::MirrorImage m_mirror_image_internal;
+  IoCtx m_ns_default_io_ctx;
+  bool m_namespace_quota_reserved = false;
+  uint64_t m_namespace_reserved_bytes = 0;
+  uint64_t m_namespace_reserved_objects = 0;
 
   void validate_data_pool();
   void handle_validate_data_pool(int r);
@@ -163,6 +171,9 @@ private:
   void mirror_image_enable();
   void handle_mirror_image_enable(int r);
 
+  void send_release_namespace_quota(int r);
+  void handle_release_namespace_quota(int r);
+
   void complete(int r);
 
   // cleanup
@@ -180,6 +191,9 @@ private:
 
   void remove_from_dir();
   void handle_remove_from_dir(int r);
+
+  void send_reserve_namespace_quota();
+  void handle_reserve_namespace_quota(int r);
 
 };
 

@@ -70,7 +70,10 @@ private:
    *    |                   disabled)
    *    |
    *    | (grow)
-   *    |\--------> STATE_GROW_OBJECT_MAP (skip if object map
+   *    |\--------> STATE_RESERVE_NS_QUOTA (skip if no namespace)
+   *    |                 |
+   *    |                 v
+   *    |           STATE_GROW_OBJECT_MAP (skip if object map
    *    |                 |                disabled)
    *    |                 v
    *    |           STATE_UPDATE_HEADER ----------------------------\
@@ -96,6 +99,9 @@ private:
    *    |                 v                                         |
    *    |           STATE_SHRINK_OBJECT_MAP (skip if object map     |
    *    |                 |                  disabled)              |
+   *    |                 v                                         |
+   *    |           STATE_RELEASE_NS_QUOTA (skip if no namespace)   |
+   *    |                 |                                         |
    *    |                 | (unblock writes)                        |
    *    | (no change)     v                                         |
    *    \------------> <finish> <-----------------------------------/
@@ -114,6 +120,10 @@ private:
   uint64_t m_new_parent_overlap;
   bool m_shrink_size_visible = false;
   bool m_disable_journal = false;
+  bool m_ns_quota_reserved = false;
+  uint64_t m_ns_delta_bytes = 0;
+  uint64_t m_ns_delta_objects = 0;
+  librados::IoCtx m_ns_default_io_ctx;
 
   typename xlist<ResizeRequest<ImageCtxT>*>::item m_xlist_item;
 
@@ -132,6 +142,10 @@ private:
   void send_trim_image();
   Context *handle_trim_image(int *result);
 
+  void send_reserve_ns_quota();
+  Context *handle_reserve_ns_quota(int *result);
+
+  Context *send_dispatch_resize();
   Context *send_grow_object_map();
   Context *handle_grow_object_map(int *result);
 
@@ -144,8 +158,13 @@ private:
   void send_update_header();
   Context *handle_update_header(int *result);
 
+  void send_release_ns_quota(uint64_t delta_bytes, uint64_t delta_objects);
+  Context *handle_release_ns_quota(int *result);
+
+  int m_ns_release_result = 0;
+
   void compute_parent_overlap();
-  void update_size_and_overlap();
+  bool update_size_and_overlap();
 
 };
 

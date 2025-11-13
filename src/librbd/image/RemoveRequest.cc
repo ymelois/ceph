@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include "librbd/image/RemoveRequest.h"
+#include "cls/rbd/cls_rbd_client.h"
 #include "common/dout.h"
 #include "common/errno.h"
 #include "librbd/internal.h"
@@ -14,6 +15,7 @@
 #include "librbd/journal/TypeTraits.h"
 #include "librbd/mirror/DisableRequest.h"
 #include "librbd/operation/TrimRequest.h"
+#include "osdc/Striper.h"
 
 #include <shared_mutex> // for std::shared_lock
 
@@ -111,6 +113,8 @@ void RemoveRequest<I>::handle_open_image(int r) {
 template<typename I>
 void RemoveRequest<I>::pre_remove_image() {
   ldout(m_cct, 5) << dendl;
+
+  record_namespace_usage();
 
   auto ctx = create_context_callback<
     RemoveRequest<I>, &RemoveRequest<I>::handle_pre_remove_image>(this);
@@ -255,7 +259,7 @@ void RemoveRequest<I>::handle_send_close_image(int r) {
   m_image_ctx = nullptr;
   if (m_ret_val < 0) {
     r = m_ret_val;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   }
 
@@ -308,7 +312,7 @@ void RemoveRequest<I>::handle_remove_header_v2(int r) {
 
   if (r < 0 && r != -ENOENT) {
     lderr(m_cct) << "error removing header: " << cpp_strerror(r) << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   }
 
@@ -338,7 +342,7 @@ void RemoveRequest<I>::handle_journal_remove(int r) {
   if (r < 0 && r != -ENOENT) {
     lderr(m_cct) << "failed to remove image journal: " << cpp_strerror(r)
                  << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   } else {
     r = 0;
@@ -369,7 +373,7 @@ void RemoveRequest<I>::handle_object_map_remove(int r) {
   if (r < 0 && r != -ENOENT) {
     lderr(m_cct) << "failed to remove image journal: " << cpp_strerror(r)
                  << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   } else {
     r = 0;
@@ -400,14 +404,14 @@ void RemoveRequest<I>::handle_mirror_image_remove(int r) {
   if (r < 0 && r != -ENOENT && r != -EOPNOTSUPP) {
     lderr(m_cct) << "failed to remove mirror image state: "
                  << cpp_strerror(r) << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   }
 
   if (m_from_trash_remove) {
     // both the id object and the directory entry have been removed in
     // a previous call to trash_move.
-    finish(0);
+    send_release_namespace_quota(0);
     return;
   }
 
@@ -497,7 +501,7 @@ void RemoveRequest<I>::handle_dir_get_image_id(int r) {
   if (r < 0 && r != -ENOENT) {
     lderr(m_cct) << "error fetching image id: " << cpp_strerror(r)
                  << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   }
 
@@ -536,7 +540,7 @@ void RemoveRequest<I>::handle_dir_get_image_name(int r) {
   if (r < 0 && r != -ENOENT) {
     lderr(m_cct) << "error fetching image name: " << cpp_strerror(r)
                  << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   }
 
@@ -571,7 +575,7 @@ void RemoveRequest<I>::handle_remove_id_object(int r) {
   if (r < 0 && r != -ENOENT) {
     lderr(m_cct) << "error removing id object: " << cpp_strerror(r)
                  << dendl;
-    finish(r);
+    send_release_namespace_quota(r);
     return;
   }
 
@@ -602,7 +606,48 @@ void RemoveRequest<I>::handle_dir_remove_image(int r) {
                  << cpp_strerror(r) << dendl;
   }
 
-  finish(r);
+  send_release_namespace_quota(r);
+}
+
+template<typename I>
+void RemoveRequest<I>::send_release_namespace_quota(int r) {
+  if (r != 0 || !m_namespace_usage_initialized) {
+    finish(r);
+    return;
+  }
+
+  std::string ns = m_ioctx.get_namespace();
+  if (ns.empty()) {
+    finish(r);
+    return;
+  }
+
+  ldout(m_cct, 20) << "bytes=" << m_namespace_usage_bytes
+                    << " objects=" << m_namespace_usage_objects << dendl;
+
+  librados::ObjectWriteOperation op;
+  cls_client::namespace_quota_update(&op, ns,
+    -static_cast<int64_t>(m_namespace_usage_bytes),
+    -static_cast<int64_t>(m_namespace_usage_objects), false);
+
+  using klass = RemoveRequest<I>;
+  librados::AioCompletion *comp =
+    create_rados_callback<klass, &klass::handle_release_namespace_quota>(this);
+  int ret = m_ns_default_io_ctx.aio_operate(RBD_NAMESPACE, comp, &op);
+  ceph_assert(ret == 0);
+  comp->release();
+}
+
+template<typename I>
+void RemoveRequest<I>::handle_release_namespace_quota(int r) {
+  ldout(m_cct, 20) << "r=" << r << dendl;
+
+  if (r < 0 && r != -EOPNOTSUPP && r != -ENOENT) {
+    ldout(m_cct, 1) << "namespace quota release failed (best-effort): "
+                     << cpp_strerror(r) << dendl;
+  }
+
+  finish(0);
 }
 
 template<typename I>
@@ -611,6 +656,27 @@ void RemoveRequest<I>::finish(int r) {
 
   m_on_finish->complete(r);
   delete this;
+}
+
+template<typename I>
+void RemoveRequest<I>::record_namespace_usage() {
+  if (m_namespace_usage_initialized || m_image_ctx == nullptr) {
+    return;
+  }
+
+  std::string ns = m_ioctx.get_namespace();
+  if (ns.empty()) {
+    return;
+  }
+
+  std::shared_lock image_locker{m_image_ctx->image_lock};
+  m_namespace_usage_bytes = m_image_ctx->size;
+  m_namespace_usage_objects =
+    Striper::get_num_objects(m_image_ctx->layout, m_image_ctx->size);
+  m_namespace_usage_initialized = true;
+
+  m_ns_default_io_ctx.dup(m_ioctx);
+  m_ns_default_io_ctx.set_namespace("");
 }
 
 } // namespace image

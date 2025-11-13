@@ -95,6 +95,9 @@ private:
    * |               |                /  |
    * |               \-------<-------/   |
    * |                                   v
+   * |                     RELEASE NAMESPACE QUOTA (best-effort,
+   * |                                   |         skip if no namespace)
+   * |                                   v
    * \------------------>------------<finish>
    *
    * @endverbatim
@@ -133,6 +136,11 @@ private:
   std::list<obj_watch_t> m_watchers;
 
   std::map<uint64_t, SnapInfo> m_snap_infos;
+
+  librados::IoCtx m_ns_default_io_ctx;
+  bool m_namespace_usage_initialized = false;
+  uint64_t m_namespace_usage_bytes = 0;
+  uint64_t m_namespace_usage_objects = 0;
 
   void open_image();
   void handle_open_image(int r);
@@ -186,7 +194,11 @@ private:
   void dir_remove_image();
   void handle_dir_remove_image(int r);
 
+  void send_release_namespace_quota(int r);
+  void handle_release_namespace_quota(int r);
+
   void finish(int r);
+  void record_namespace_usage();
 };
 
 } // namespace image
