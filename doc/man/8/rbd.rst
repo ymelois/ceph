@@ -591,6 +591,14 @@ Commands
 :command:`namespace remove` *pool-name*/*namespace-name*
   Remove an empty image namespace from the pool.
 
+:command:`namespace quota set` *pool-name*/*namespace-name* [--max-bytes *bytes*] [--no-max-bytes] [--max-objects *count*] [--no-max-objects]
+  Set quota limits for an image namespace. At least one of --max-bytes,
+  --no-max-bytes, --max-objects, or --no-max-objects must be specified.
+  Use --no-max-bytes or --no-max-objects to remove a previously set limit.
+
+:command:`namespace quota show` *pool-name*/*namespace-name*
+  Show the current quota limits and usage for an image namespace.
+
 :command:`object-map check` *image-spec* | *snap-spec*
   Verify the object map is correct.
 

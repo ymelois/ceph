@@ -1405,6 +1405,52 @@ function test_mon_config_key()
   ceph config-key dump | grep -c $key | grep 0
 }
 
+function test_rbd_namespace_quota()
+{
+  local pool=rbd
+  local ns=$(uuidgen | tr 'A-Z' 'a-z')
+  local spec=${pool}/${ns}
+
+  rbd namespace create $spec
+
+  local quota_bytes=$((4 * 1024 * 1024))
+  local quota_objects=8
+  rbd namespace quota set $spec --max-bytes $quota_bytes --max-objects $quota_objects
+
+  local quota_json=$(rbd namespace quota show $spec --format json)
+  echo "$quota_json" | jq '.max_bytes' | grep $quota_bytes
+  echo "$quota_json" | jq '.max_objects' | grep $quota_objects
+
+  rbd create ${spec}/img1 --size 3 --image-format 2
+  expect_false rbd create ${spec}/img2 --size 3 --image-format 2
+  rbd rm ${spec}/img1
+
+  # test resize quota enforcement
+  rbd namespace quota set $spec --max-bytes $((12 * 1024 * 1024))
+  rbd create ${spec}/resize_img --size 4 --image-format 2
+  rbd resize ${spec}/resize_img --size 8
+  expect_false rbd resize ${spec}/resize_img --size 20
+  rbd resize ${spec}/resize_img --size 4 --allow-shrink
+  rbd rm ${spec}/resize_img
+
+  # test quota update (change only max_bytes, leave max_objects)
+  rbd namespace quota set $spec --max-bytes $quota_bytes --max-objects $quota_objects
+  rbd namespace quota set $spec --max-bytes $((8 * 1024 * 1024))
+  local updated_json=$(rbd namespace quota show $spec --format json)
+  echo "$updated_json" | jq '.max_bytes' | grep $((8 * 1024 * 1024))
+  echo "$updated_json" | jq '.max_objects' | grep $quota_objects
+
+  # test quota removal (--no-max-bytes)
+  rbd namespace quota set $spec --no-max-bytes
+  local removed_json=$(rbd namespace quota show $spec --format json)
+  echo "$removed_json" | jq '.max_bytes' | grep 0
+  echo "$removed_json" | jq '.max_objects' | grep $quota_objects
+
+  expect_false rbd namespace quota set ${pool}/ --max-bytes 1024
+
+  rbd namespace remove $spec
+}
+
 function test_mon_osd()
 {
   #
@@ -2869,6 +2915,7 @@ OSD_TESTS+=" admin_heap_profiler"
 OSD_TESTS+=" osd_tell_help_command"
 OSD_TESTS+=" osd_compact"
 OSD_TESTS+=" per_pool_scrub_status"
+OSD_TESTS+=" rbd_namespace_quota"
 
 MDS_TESTS+=" mds_tell"
 MDS_TESTS+=" mon_mds"
