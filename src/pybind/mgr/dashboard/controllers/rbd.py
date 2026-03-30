@@ -483,6 +483,48 @@ class RbdNamespace(RESTController):
                 })
             return result
 
+    @RESTController.Resource('GET', path='/quota')
+    @handle_rados_error('pool')
+    @handle_rbd_error()
+    @ReadPermission
+    @EndpointDoc("Get RBD namespace quota",
+                 parameters={'pool_name': (str, 'Pool Name'),
+                             'namespace': (str, 'Namespace')},
+                 responses={200: {
+                     'max_bytes': (int, 'Maximum bytes (0 for unlimited)'),
+                     'max_objects': (int, 'Maximum objects (0 for unlimited)'),
+                     'used_bytes': (int, 'Current bytes used'),
+                     'used_objects': (int, 'Current objects used'),
+                 }})
+    def get_quota(self, pool_name, namespace):
+        with mgr.rados.open_ioctx(pool_name) as ioctx:
+            return self.rbd_inst.namespace_get_quota(ioctx, namespace)
+
+    @RESTController.Resource('PUT', path='/quota')
+    @handle_rados_error('pool')
+    @handle_rbd_error()
+    @UpdatePermission
+    @EndpointDoc("Set RBD namespace quota",
+                 parameters={'pool_name': (str, 'Pool Name'),
+                             'namespace': (str, 'Namespace'),
+                             'max_bytes': (int, 'Maximum bytes (0 for unlimited)'),
+                             'max_objects': (int, 'Maximum objects (0 for unlimited)')})
+    def set_quota(self, pool_name, namespace, max_bytes=None, max_objects=None):
+        set_max_bytes = max_bytes is not None
+        set_max_objects = max_objects is not None
+        if not set_max_bytes and not set_max_objects:
+            raise DashboardException(
+                msg='At least one of max_bytes or max_objects must be specified',
+                code='invalid_quota_request',
+                component='rbd')
+        with mgr.rados.open_ioctx(pool_name) as ioctx:
+            self.rbd_inst.namespace_set_quota(
+                ioctx, namespace,
+                set_max_bytes=set_max_bytes,
+                max_bytes=max_bytes or 0,
+                set_max_objects=set_max_objects,
+                max_objects=max_objects or 0)
+
 
 NAMESPACE_PARAM_DESC = ('Optional RBD namespace within the pool. Provides logical '
                         'isolation of images. When specified, operations are scoped to '
