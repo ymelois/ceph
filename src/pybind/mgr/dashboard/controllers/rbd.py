@@ -568,3 +568,48 @@ class RbdNamespace(RESTController):
                     'num_images': len(images) if images else 0
                 })
             return result
+
+    @RESTController.Resource('GET', path='/quota')
+    @handle_rados_error('pool')
+    @handle_rbd_error()
+    @ReadPermission
+    @EndpointDoc("Get RBD namespace quota",
+                 parameters={'pool_name': (str, 'Pool Name'),
+                             'namespace': (str, 'Namespace')},
+                 responses={200: {
+                     'max_bytes': (int, 'Maximum bytes (0 for unlimited)'),
+                     'max_objects': (int, 'Maximum objects (0 for unlimited)'),
+                     'used_bytes': (int, 'Current bytes used'),
+                     'used_objects': (int, 'Current objects used'),
+                 }})
+    def get_quota(self, pool_name, namespace):
+        with mgr.rados.open_ioctx(pool_name) as ioctx:
+            return self.rbd_inst.namespace_get_quota(ioctx, namespace)
+
+    @RESTController.Resource('PUT', path='/quota')
+    @handle_rados_error('pool')
+    @handle_rbd_error()
+    @UpdatePermission
+    @EndpointDoc("Set RBD namespace quota",
+                 parameters={'pool_name': (str, 'Pool Name'),
+                             'namespace': (str, 'Namespace'),
+                             'max_bytes': (int, 'Maximum bytes (0 for unlimited)'),
+                             'max_objects': (int, 'Maximum objects (0 for unlimited)')})
+    def set_quota(self, pool_name, namespace, max_bytes=None, max_objects=None):
+        fields = 0
+        if max_bytes is not None:
+            fields |= rbd.RBD_NAMESPACE_QUOTA_FIELD_MAX_BYTES
+        else:
+            max_bytes = 0
+        if max_objects is not None:
+            fields |= rbd.RBD_NAMESPACE_QUOTA_FIELD_MAX_OBJECTS
+        else:
+            max_objects = 0
+        if fields == 0:
+            raise DashboardException(
+                msg='At least one of max_bytes or max_objects must be specified',
+                code='invalid_quota_request',
+                component='rbd')
+        with mgr.rados.open_ioctx(pool_name) as ioctx:
+            self.rbd_inst.namespace_set_quota(ioctx, namespace, fields,
+                                              max_bytes, max_objects)
