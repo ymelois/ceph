@@ -891,6 +891,28 @@ struct TrashImageSpec {
 
 WRITE_CLASS_ENCODER(TrashImageSpec);
 
+struct NamespaceInfo {
+  uint64_t max_bytes = 0;
+  uint64_t max_objects = 0;
+  uint64_t used_bytes = 0;
+  uint64_t used_objects = 0;
+
+  void encode(ceph::buffer::list &bl) const;
+  void decode(ceph::buffer::list::const_iterator &it);
+  void dump(ceph::Formatter *f) const;
+
+  static void generate_test_instances(std::list<NamespaceInfo*> &o);
+
+  inline bool operator==(const NamespaceInfo& rhs) const {
+    return max_bytes == rhs.max_bytes &&
+           max_objects == rhs.max_objects &&
+           used_bytes == rhs.used_bytes &&
+           used_objects == rhs.used_objects;
+  }
+};
+
+WRITE_CLASS_ENCODER(NamespaceInfo);
+
 struct MirrorImageMap {
   MirrorImageMap() {
   }

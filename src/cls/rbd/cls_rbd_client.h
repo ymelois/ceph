@@ -649,6 +649,26 @@ int namespace_list_finish(ceph::buffer::list::const_iterator *it,
 int namespace_list(librados::IoCtx *ioctx,
                    const std::string &start, uint64_t max_return,
                    std::list<std::string> *entries);
+void namespace_quota_get_start(librados::ObjectReadOperation *op,
+                               const std::string &name);
+int namespace_quota_get_finish(ceph::buffer::list::const_iterator *it,
+                               cls::rbd::NamespaceInfo *info);
+int namespace_quota_get(librados::IoCtx *ioctx, const std::string &name,
+                        cls::rbd::NamespaceInfo *info);
+void namespace_quota_set(librados::ObjectWriteOperation *op,
+                         const std::string &name,
+                         bool set_max_bytes, uint64_t max_bytes,
+                         bool set_max_objects, uint64_t max_objects);
+int namespace_quota_set(librados::IoCtx *ioctx, const std::string &name,
+                        bool set_max_bytes, uint64_t max_bytes,
+                        bool set_max_objects, uint64_t max_objects);
+void namespace_quota_update(librados::ObjectWriteOperation *op,
+                            const std::string &name,
+                            int64_t delta_bytes, int64_t delta_objects,
+                            bool enforce);
+int namespace_quota_update(librados::IoCtx *ioctx, const std::string &name,
+                           int64_t delta_bytes, int64_t delta_objects,
+                           bool enforce);
 
 // operations on data objects
 void assert_snapc_seq(neorados::WriteOp* op,

@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <errno.h>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
 #include "include/uuid.h"
@@ -8027,6 +8028,42 @@ std::string name_from_key(const std::string &key) {
 
 } // namespace nspace
 
+static int namespace_read_info(cls_method_context_t hctx,
+                               const std::string& key,
+                               cls::rbd::NamespaceInfo *info) {
+  bufferlist bl;
+  int r = cls_cxx_map_get_val(hctx, key, &bl);
+  if (r < 0) {
+    if (r != -ENOENT) {
+      CLS_ERR("error reading namespace info omap key %s: %s",
+              key.c_str(), cpp_strerror(r).c_str());
+    }
+    return r;
+  }
+
+  if (bl.length() == 0) {
+    *info = cls::rbd::NamespaceInfo();
+    return 0;
+  }
+
+  try {
+    auto iter = bl.cbegin();
+    decode(*info, iter);
+  } catch (const ceph::buffer::error &err) {
+    CLS_ERR("failed to decode namespace info");
+    return -EIO;
+  }
+  return 0;
+}
+
+static int namespace_write_info(cls_method_context_t hctx,
+                                const std::string& key,
+                                const cls::rbd::NamespaceInfo& info) {
+  bufferlist bl;
+  encode(info, bl);
+  return cls_cxx_map_set_val(hctx, key, &bl);
+}
+
 /**
  * Add a namespace to the namespace directory.
  *
@@ -8056,7 +8093,8 @@ int namespace_add(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
     return -EEXIST;
   }
 
-  r = cls_cxx_map_set_val(hctx, key, &value);
+  cls::rbd::NamespaceInfo info;
+  r = namespace_write_info(hctx, key, info);
   if (r < 0) {
     CLS_ERR("failed to set omap key: %s", key.c_str());
     return r;
@@ -8155,6 +8193,186 @@ int namespace_list(cls_method_context_t hctx, bufferlist *in, bufferlist *out)
 
   encode(data, *out);
   return 0;
+}
+
+/**
+ * Get quota and usage information for a namespace.
+ *
+ * Input:
+ * @param name the name of the namespace
+ *
+ * Output:
+ * @param NamespaceInfo encoded quota and usage information
+ *
+ * @returns 0 on success, negative error code on failure
+ */
+int namespace_quota_get(cls_method_context_t hctx, bufferlist *in,
+                        bufferlist *out)
+{
+  std::string name;
+  try {
+    auto iter = in->cbegin();
+    decode(name, iter);
+  } catch (const ceph::buffer::error &err) {
+    return -EINVAL;
+  }
+
+  if (name.empty()) {
+    return -EINVAL;
+  }
+
+  auto key = nspace::key_for_name(name);
+  cls::rbd::NamespaceInfo info;
+  int r = namespace_read_info(hctx, key, &info);
+  if (r < 0) {
+    return r;
+  }
+
+  encode(info, *out);
+  return 0;
+}
+
+/**
+ * Set quota limits for a namespace.
+ *
+ * Input:
+ * @param name the name of the namespace
+ * @param set_max_bytes whether to update the max bytes limit
+ * @param max_bytes the maximum bytes limit (only if set_max_bytes is true)
+ * @param set_max_objects whether to update the max objects limit
+ * @param max_objects the maximum objects limit (only if set_max_objects is true)
+ *
+ * @returns 0 on success, negative error code on failure
+ */
+int namespace_quota_set(cls_method_context_t hctx, bufferlist *in,
+                        bufferlist *out)
+{
+  std::string name;
+  bool set_max_bytes;
+  bool set_max_objects;
+  uint64_t max_bytes = 0;
+  uint64_t max_objects = 0;
+  try {
+    auto iter = in->cbegin();
+    decode(name, iter);
+    decode(set_max_bytes, iter);
+    if (set_max_bytes) {
+      decode(max_bytes, iter);
+    }
+    decode(set_max_objects, iter);
+    if (set_max_objects) {
+      decode(max_objects, iter);
+    }
+  } catch (const ceph::buffer::error &err) {
+    return -EINVAL;
+  }
+
+  if (name.empty() || (!set_max_bytes && !set_max_objects)) {
+    return -EINVAL;
+  }
+
+  auto key = nspace::key_for_name(name);
+  cls::rbd::NamespaceInfo info;
+  int r = namespace_read_info(hctx, key, &info);
+  if (r < 0) {
+    return r;
+  }
+
+  if (set_max_bytes) {
+    info.max_bytes = max_bytes;
+  }
+  if (set_max_objects) {
+    info.max_objects = max_objects;
+  }
+
+  return namespace_write_info(hctx, key, info);
+}
+
+/**
+ * Atomically update namespace quota usage counters.
+ *
+ * Input:
+ * @param name the name of the namespace
+ * @param delta_bytes signed change in bytes usage
+ * @param delta_objects signed change in objects usage
+ * @param enforce whether to check limits and return -EDQUOT on overflow
+ *
+ * @returns 0 on success, -EDQUOT if enforce is true and quota exceeded,
+ *          negative error code on failure
+ */
+int namespace_quota_update(cls_method_context_t hctx, bufferlist *in,
+                           bufferlist *out)
+{
+  std::string name;
+  int64_t delta_bytes = 0;
+  int64_t delta_objects = 0;
+  bool enforce = false;
+  try {
+    auto iter = in->cbegin();
+    decode(name, iter);
+    decode(delta_bytes, iter);
+    decode(delta_objects, iter);
+    decode(enforce, iter);
+  } catch (const ceph::buffer::error &err) {
+    return -EINVAL;
+  }
+
+  if (name.empty()) {
+    return -EINVAL;
+  }
+
+  auto key = nspace::key_for_name(name);
+  cls::rbd::NamespaceInfo info;
+  int r = namespace_read_info(hctx, key, &info);
+  if (r < 0) {
+    return r;
+  }
+
+  auto apply_delta = [&](uint64_t current, int64_t delta,
+                         uint64_t limit, uint64_t *updated) -> int {
+    if (delta == 0) {
+      *updated = current;
+      return 0;
+    }
+    if (delta < 0) {
+      uint64_t magnitude = static_cast<uint64_t>(-delta);
+      if (magnitude > current) {
+        return -ERANGE;
+      }
+      *updated = current - magnitude;
+      return 0;
+    }
+
+    uint64_t increment = static_cast<uint64_t>(delta);
+    if (increment > std::numeric_limits<uint64_t>::max() - current) {
+      return -EOVERFLOW;
+    }
+    uint64_t candidate = current + increment;
+    if (enforce && limit > 0 && candidate > limit) {
+      return -EDQUOT;
+    }
+    *updated = candidate;
+    return 0;
+  };
+
+  uint64_t new_used_bytes = info.used_bytes;
+  uint64_t new_used_objects = info.used_objects;
+
+  r = apply_delta(info.used_bytes, delta_bytes, info.max_bytes,
+                  &new_used_bytes);
+  if (r < 0) {
+    return r;
+  }
+  r = apply_delta(info.used_objects, delta_objects, info.max_objects,
+                  &new_used_objects);
+  if (r < 0) {
+    return r;
+  }
+
+  info.used_bytes = new_used_bytes;
+  info.used_objects = new_used_objects;
+
+  return namespace_write_info(hctx, key, info);
 }
 
 /**
@@ -8385,6 +8603,9 @@ CLS_INIT(rbd)
   cls_method_handle_t h_namespace_add;
   cls_method_handle_t h_namespace_remove;
   cls_method_handle_t h_namespace_list;
+  cls_method_handle_t h_namespace_quota_get;
+  cls_method_handle_t h_namespace_quota_set;
+  cls_method_handle_t h_namespace_quota_update;
   cls_method_handle_t h_copyup;
   cls_method_handle_t h_sparse_copyup;
   cls_method_handle_t h_assert_snapc_seq;
@@ -8797,6 +9018,14 @@ CLS_INIT(rbd)
                           namespace_remove, &h_namespace_remove);
   cls_register_cxx_method(h_class, "namespace_list", CLS_METHOD_RD,
                           namespace_list, &h_namespace_list);
+  cls_register_cxx_method(h_class, "namespace_quota_get", CLS_METHOD_RD,
+                          namespace_quota_get, &h_namespace_quota_get);
+  cls_register_cxx_method(h_class, "namespace_quota_set",
+                          CLS_METHOD_RD | CLS_METHOD_WR,
+                          namespace_quota_set, &h_namespace_quota_set);
+  cls_register_cxx_method(h_class, "namespace_quota_update",
+                          CLS_METHOD_RD | CLS_METHOD_WR,
+                          namespace_quota_update, &h_namespace_quota_update);
 
   /* data object methods */
   cls_register_cxx_method(h_class, "copyup",
