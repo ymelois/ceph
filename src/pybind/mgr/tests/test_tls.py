@@ -34,3 +34,21 @@ class TLSchecks(unittest.TestCase):
         new_key = crypto.dump_privatekey(crypto.FILETYPE_PEM, new_key).decode('utf-8')
 
         self.assertRaises(SSL.Error, verify_tls, crt, new_key)
+
+    def test_get_cert_issuer_info(self):
+
+        # valid certificate
+        org, cn = get_cert_issuer_info(valid_ceph_cert)
+        assert org == 'Ceph'
+        assert cn == 'cephadm'
+
+        # empty certificate
+        self.assertRaises(ServerConfigException, get_cert_issuer_info, '')
+
+        # invalid certificate
+        self.assertRaises(ServerConfigException, get_cert_issuer_info, invalid_cert)
+
+        # expired certificate
+        self.assertRaisesRegex(ServerConfigException,
+                               'Certificate issued by "Ceph/cephadm" expired',
+                               certificate_days_to_expire, expired_cert)
