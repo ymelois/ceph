@@ -5,7 +5,7 @@ CCONF="$BINDIR/ceph-conf"
 default_conf=$ETCDIR"/ceph.conf"
 conf=$default_conf
 
-hostname=`hostname -s`
+hostname=`hostname`
 
 verify_conf() {
     # fetch conf?
