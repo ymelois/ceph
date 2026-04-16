@@ -148,7 +148,7 @@ class Manager : public DoutPrefixProvider {
       if (pending_tokens == 0) {
         return;
       }
-      timer.expires_from_now(infinite_duration);
+      timer.expires_after(infinite_duration);
       boost::system::error_code ec; 
       timer.async_wait(yield[ec]);
       ceph_assert(ec == boost::system::errc::operation_canceled);
@@ -225,7 +225,7 @@ class Manager : public DoutPrefixProvider {
           << ". error: " << ret << dendl;
       }
       Timer timer(io_context);
-      timer.expires_from_now(std::chrono::seconds(reservations_cleanup_period_s));
+      timer.expires_after(std::chrono::seconds(reservations_cleanup_period_s));
       boost::system::error_code ec;
 	    timer.async_wait(yield[ec]);
     }
@@ -246,7 +246,7 @@ class Manager : public DoutPrefixProvider {
       // if queue was empty the last time, sleep for idle timeout
       if (is_idle) {
         Timer timer(io_context);
-        timer.expires_from_now(std::chrono::microseconds(queue_idle_sleep_us));
+        timer.expires_after(std::chrono::microseconds(queue_idle_sleep_us));
         boost::system::error_code ec;
 	      timer.async_wait(yield[ec]);
       }
@@ -390,7 +390,7 @@ class Manager : public DoutPrefixProvider {
       const auto duration = (has_error ? 
         std::chrono::milliseconds(queues_update_retry_ms) : std::chrono::milliseconds(queues_update_period_ms)) + 
         std::chrono::milliseconds(duration_jitter(rnd_gen));
-      timer.expires_from_now(duration);
+      timer.expires_after(duration);
       const auto tp = ceph::coarse_real_time::clock::to_time_t(ceph::coarse_real_time::clock::now() + duration);
       ldpp_dout(this, 20) << "INFO: next queues processing will happen at: " << std::ctime(&tp)  << dendl;
       boost::system::error_code ec;
@@ -495,7 +495,7 @@ public:
       // start the worker threads to do the actual queue processing
       const std::string WORKER_THREAD_NAME = "notif-worker";
       for (auto worker_id = 0U; worker_id < worker_count; ++worker_id) {
-        workers.emplace_back([this]() {
+        workers.emplace_back([this]() noexcept {
           try {
             io_context.run(); 
           } catch (const std::exception& err) {

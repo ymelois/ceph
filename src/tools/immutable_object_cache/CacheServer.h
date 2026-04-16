@@ -33,7 +33,7 @@ class CacheServer {
 
  private:
   CephContext* cct;
-  boost::asio::io_service m_io_service;
+  boost::asio::io_context m_io_service;
   ProcessMsg m_server_process_msg;
   stream_protocol::endpoint m_local_path;
   stream_protocol::acceptor m_acceptor;

@@ -5,6 +5,7 @@
 #define CEPH_CACHE_CACHE_CLIENT_H
 
 #include <atomic>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/algorithm/string.hpp>
@@ -57,17 +58,17 @@ class CacheClient {
 
  private:
   CephContext* m_cct;
-  boost::asio::io_service m_io_service;
-  boost::asio::io_service::work m_io_service_work;
+  boost::asio::io_context m_io_service;
+  boost::asio::executor_work_guard<boost::asio::io_context::executor_type> m_io_service_work;
   stream_protocol::socket m_dm_socket;
   stream_protocol::endpoint m_ep;
   std::shared_ptr<std::thread> m_io_thread;
   std::atomic<bool> m_session_work;
 
   uint64_t m_worker_thread_num;
-  boost::asio::io_service* m_worker;
+  boost::asio::io_context* m_worker;
   std::vector<std::thread*> m_worker_threads;
-  boost::asio::io_service::work* m_worker_io_service_work;
+  boost::asio::executor_work_guard<boost::asio::io_context::executor_type>* m_worker_io_service_work;
 
   std::atomic<bool> m_writing;
   std::atomic<bool> m_reading;

@@ -16,7 +16,7 @@
 namespace ceph {
 namespace immutable_obj_cache {
 
-CacheSession::CacheSession(io_service& io_service,
+CacheSession::CacheSession(io_context& io_service,
                            ProcessMsg processmsg,
                            CephContext* cct)
     : m_dm_socket(io_service),

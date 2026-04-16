@@ -73,7 +73,7 @@ librados::IoCtx AsioRados::snapio;
 
 TEST_F(AsioRados, AsyncReadCallback)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   auto success_cb = [&] (boost::system::error_code ec, bufferlist bl) {
     EXPECT_FALSE(ec);
@@ -91,7 +91,7 @@ TEST_F(AsioRados, AsyncReadCallback)
 
 TEST_F(AsioRados, AsyncReadFuture)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   std::future<bufferlist> f1 = librados::async_read(service, io, "exist", 256,
                                                     0, boost::asio::use_future);
@@ -109,7 +109,7 @@ TEST_F(AsioRados, AsyncReadFuture)
 
 TEST_F(AsioRados, AsyncReadYield)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   auto success_cr = [&] (boost::asio::yield_context yield) {
     boost::system::error_code ec;
@@ -131,7 +131,7 @@ TEST_F(AsioRados, AsyncReadYield)
 
 TEST_F(AsioRados, AsyncWriteCallback)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   bufferlist bl;
   bl.append("hello");
@@ -153,7 +153,7 @@ TEST_F(AsioRados, AsyncWriteCallback)
 
 TEST_F(AsioRados, AsyncWriteFuture)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   bufferlist bl;
   bl.append("hello");
@@ -171,7 +171,7 @@ TEST_F(AsioRados, AsyncWriteFuture)
 
 TEST_F(AsioRados, AsyncWriteYield)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   bufferlist bl;
   bl.append("hello");
@@ -198,7 +198,7 @@ TEST_F(AsioRados, AsyncWriteYield)
 
 TEST_F(AsioRados, AsyncReadOperationCallback)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
   {
     librados::ObjectReadOperation op;
     op.read(0, 0, nullptr, nullptr);
@@ -221,7 +221,7 @@ TEST_F(AsioRados, AsyncReadOperationCallback)
 
 TEST_F(AsioRados, AsyncReadOperationFuture)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
   std::future<bufferlist> f1;
   {
     librados::ObjectReadOperation op;
@@ -247,7 +247,7 @@ TEST_F(AsioRados, AsyncReadOperationFuture)
 
 TEST_F(AsioRados, AsyncReadOperationYield)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   auto success_cr = [&] (boost::asio::yield_context yield) {
     librados::ObjectReadOperation op;
@@ -275,7 +275,7 @@ TEST_F(AsioRados, AsyncReadOperationYield)
 
 TEST_F(AsioRados, AsyncWriteOperationCallback)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   bufferlist bl;
   bl.append("hello");
@@ -301,7 +301,7 @@ TEST_F(AsioRados, AsyncWriteOperationCallback)
 
 TEST_F(AsioRados, AsyncWriteOperationFuture)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   bufferlist bl;
   bl.append("hello");
@@ -328,7 +328,7 @@ TEST_F(AsioRados, AsyncWriteOperationFuture)
 
 TEST_F(AsioRados, AsyncWriteOperationYield)
 {
-  boost::asio::io_service service;
+  boost::asio::io_context service;
 
   bufferlist bl;
   bl.append("hello");

@@ -11,14 +11,14 @@
 #include "SocketCommon.h"
 
 using boost::asio::local::stream_protocol;
-using boost::asio::io_service;
+using boost::asio::io_context;
 
 namespace ceph {
 namespace immutable_obj_cache {
 
 class CacheSession : public std::enable_shared_from_this<CacheSession> {
  public:
-  CacheSession(io_service& io_service, ProcessMsg process_msg,
+  CacheSession(io_context& io_service, ProcessMsg process_msg,
                 CephContext* ctx);
   ~CacheSession();
   stream_protocol::socket& socket();
